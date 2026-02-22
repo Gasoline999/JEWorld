@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>uNmINeD</title>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+    <!-- OpenLayers  -->
+    <link rel="stylesheet" type="text/css" href="lib/ol.css">
+    <script src="lib/ol.js"></script>
+
+    <!-- OpenLayers Context Menu -->
+    <link href="lib/ol-contextmenu.css" rel="stylesheet">
+    <script src="lib/ol-contextmenu.iife.js"></script>
+
+    <!-- Toastify -->
+    <script type="text/javascript" src="lib/toastify-js.js"></script>
+    <link rel="stylesheet" type="text/css" href="lib/toastify-js.min.css">
+
+    <!-- uNmINeD JS and CSS -->
+    <script type="text/javascript" src="unmined.js"></script>
+    <link rel="stylesheet" type="text/css" href="index.css">
+    
+    <style>
+        #dimension-switcher {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 10000;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        #dimension-switcher h3 {
+            margin: 0 0 8px 0;
+            color: #fff;
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .dim-btn {
+            display: block;
+            width: 140px;
+            margin: 4px 0;
+            padding: 8px 12px;
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .dim-btn:hover {
+            background: #357abd;
+        }
+
+        .dim-btn.active {
+            background: #2ecc71;
+            font-weight: bold;
+        }
+
+        .dim-btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        #loading-indicator {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            font-size: 16px;
+            z-index: 20000;
+            display: none;
+        }
+
+        #loading-indicator.show {
+            display: block;
+        }
+    </style>
+
+</head>
+
+<body>
+    <div id="dimension-switcher">
+        <h3>🌍 ディメンション</h3>
+        <button class="dim-btn active" onclick="switchDimension('overworld')" id="btn-overworld">
+            🌲 オーバーワールド
+        </button>
+        <button class="dim-btn" onclick="switchDimension('nether')" id="btn-nether">
+            🔥 ネザー
+        </button>
+        <button class="dim-btn" onclick="switchDimension('the_end')" id="btn-the_end">
+            🌌 エンド
+        </button>
+    </div>
+
+    <div id="loading-indicator">読み込み中...</div>
+
+    <div id="map"></div>
+
+    <script type="text/javascript">
+        let currentDimension = 'overworld';
+        let unminedInstance = null;
+        let loadedScripts = {};
+
+        function showLoading(show) {
+            const loader = document.getElementById('loading-indicator');
+            if (show) {
+                loader.classList.add('show');
+            } else {
+                loader.classList.remove('show');
+            }
+        }
+
+        function removeOldScripts() {
+            // 古いスクリプトを削除
+            const scriptsToRemove = [
+                'unmined.map.properties.js',
+                'unmined.map.regions.js',
+                'unmined.map.players.js',
+                'custom.markers.js'
+            ];
+
+            scriptsToRemove.forEach(scriptName => {
+                const scripts = document.querySelectorAll(`script[src*="${scriptName}"]`);
+                scripts.forEach(script => {
+                    if (script.parentNode) {
+                        script.parentNode.removeChild(script);
+                    }
+                });
+            });
+
+            // グローバル変数をクリア
+            if (window.UnminedMapProperties) delete window.UnminedMapProperties;
+            if (window.UnminedRegions) delete window.UnminedRegions;
+            if (window.UnminedPlayers) delete window.UnminedPlayers;
+            if (window.UnminedCustomMarkers) delete window.UnminedCustomMarkers;
+        }
+
+        function loadScript(src, timeout = 5000) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.type = 'text/javascript';
+                script.src = src + '?t=' + Date.now(); // キャッシュ回避
+                
+                const timer = setTimeout(() => {
+                    reject(new Error(`Timeout loading script: ${src}`));
+                }, timeout);
+
+                script.onload = () => {
+                    clearTimeout(timer);
+                    console.log('Loaded:', src);
+                    resolve();
+                };
+                
+                script.onerror = () => {
+                    clearTimeout(timer);
+                    reject(new Error(`Failed to load script: ${src}`));
+                };
+                
+                document.head.appendChild(script);
+            });
+        }
+
+        async function loadDimensionData(dimension) {
+            removeOldScripts();
+
+            const basePath = dimension === 'overworld' ? '' : dimension + '/';
+            
+            console.log('Loading dimension:', dimension, 'from path:', basePath);
+
+            try {
+                // ファイルを順番に読み込む
+                await loadScript(basePath + 'unmined.map.properties.js');
+                await loadScript(basePath + 'unmined.map.regions.js');
+                await loadScript(basePath + 'unmined.map.players.js');
+                await loadScript(basePath + 'custom.markers.js');
+
+                // データが正しく読み込まれたか確認
+                if (!window.UnminedMapProperties) {
+                    throw new Error('UnminedMapProperties が読み込まれませんでした');
+                }
+                if (!window.UnminedRegions) {
+                    throw new Error('UnminedRegions が読み込まれませんでした');
+                }
+
+                console.log('Dimension data loaded successfully');
+                console.log('World name:', UnminedMapProperties.worldName);
+                console.log('Regions:', UnminedRegions.length);
+
+                return true;
+            } catch (error) {
+                console.error('Error loading dimension data:', error);
+                throw error;
+            }
+        }
+
+        function initializeMap() {
+            try {
+                document.title = UnminedMapProperties.worldName + " - uNmINeD";
+
+                if (UnminedCustomMarkers && UnminedCustomMarkers.isEnabled && UnminedCustomMarkers.markers) {
+                    UnminedMapProperties.markers = UnminedMapProperties.markers.concat(UnminedCustomMarkers.markers);
+                }
+                
+                if (UnminedPlayers && UnminedPlayers.length > 0) {
+                    UnminedMapProperties.playerMarkers = Unmined.createPlayerMarkers(UnminedPlayers);
+                }
+
+                const mapElement = document.getElementById('map');
+                
+                // 既存のマップをクリア
+                mapElement.innerHTML = '';
+                
+                // 新しいマップインスタンスを作成
+                unminedInstance = new Unmined(mapElement, UnminedMapProperties, UnminedRegions);
+                
+                console.log('Map initialized successfully');
+            } catch (error) {
+                console.error('Error initializing map:', error);
+                alert('マップの初期化に失敗しました: ' + error.message);
+            }
+        }
+
+        async function switchDimension(dimension) {
+            if (currentDimension === dimension) {
+                return;
+            }
+
+            console.log('Switching to dimension:', dimension);
+            showLoading(true);
+
+            // ボタンを無効化
+            document.querySelectorAll('.dim-btn').forEach(btn => {
+                btn.disabled = true;
+            });
+
+            try {
+                // ボタンの状態を更新
+                document.querySelectorAll('.dim-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                document.getElementById('btn-' + dimension).classList.add('active');
+
+                currentDimension = dimension;
+
+                // データを読み込んでマップを再初期化
+                await loadDimensionData(dimension);
+                initializeMap();
+
+                showLoading(false);
+            } catch (error) {
+                console.error('Error switching dimension:', error);
+                alert('ディメンションの切り替えに失敗しました: ' + dimension + '\nエラー: ' + error.message + '\n\n各ディメンションのフォルダに必要なファイルが揃っているか確認してください。');
+                
+                // 元のディメンションに戻す
+                document.querySelectorAll('.dim-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                document.getElementById('btn-' + currentDimension).classList.add('active');
+                
+                showLoading(false);
+            } finally {
+                // ボタンを有効化
+                document.querySelectorAll('.dim-btn').forEach(btn => {
+                    btn.disabled = false;
+                });
+            }
+        }
+
+        // 初期化
+        window.addEventListener('DOMContentLoaded', async () => {
+            console.log('Initializing application...');
+            showLoading(true);
+            
+            try {
+                await loadDimensionData('overworld');
+                initializeMap();
+            } catch (error) {
+                console.error('Error during initial load:', error);
+                alert('初期読み込みに失敗しました: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        });
+    </script>
+</body>
+
+</html>
